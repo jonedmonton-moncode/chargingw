@@ -1,11 +1,95 @@
 package com.chargingw;
-import android.app.*;import android.appwidget.*;import android.content.*;import android.os.*;import android.widget.*;import java.util.Locale;
+
+import android.app.*;
+import android.appwidget.AppWidgetManager;
+import android.content.*;
+import android.os.*;
+import android.widget.RemoteViews;
+import java.util.Locale;
+
 public class ChargeService extends Service {
- private Handler handler=new Handler(Looper.getMainLooper()); private Runnable task; private final String CHANNEL="charging_w";
- static void start(Context c){if(AppWidgetManager.getInstance(c).getAppWidgetIds(new ComponentName(c,ChargingWidget.class)).length>0){try{c.startForegroundService(new Intent(c,ChargeService.class));}catch(Exception ignored){}}}
- @Override public void onCreate(){super.onCreate();NotificationChannel ch=new NotificationChannel(CHANNEL,"Charging W",NotificationManager.IMPORTANCE_LOW);((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(ch);Notification n=new Notification.Builder(this,CHANNEL).setContentTitle("Charging W").setContentText("Actualisation du widget active").setSmallIcon(android.R.drawable.ic_lock_idle_charging).build();startForeground(1,n);task=()->{update();int seconds=getSharedPreferences("prefs",0).getInt("seconds",5);handler.postDelayed(task,Math.max(1,seconds)*1000L);};handler.post(task);}
- private void update(){AppWidgetManager manager=AppWidgetManager.getInstance(this);int[] ids=manager.getAppWidgetIds(new ComponentName(this,ChargingWidget.class));if(ids.length==0){stopSelf();return;}Intent b=registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));String display="–";if(b!=null){int plugged=b.getIntExtra(BatteryManager.EXTRA_PLUGGED,0);if(plugged!=0){BatteryManager bm=(BatteryManager)getSystemService(BATTERY_SERVICE);long ua=bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);int mv=b.getIntExtra(BatteryManager.EXTRA_VOLTAGE,0);if(ua!=Long.MIN_VALUE&&ua!=0&&mv>0){double w=Math.abs((double)ua*mv)/1_000_000_000.0;display=String.format(Locale.US,"%.1f W",w);}else display="N/A";}}for(int id:ids){RemoteViews v=new RemoteViews(getPackageName(),R.layout.widget);v.setTextViewText(R.id.value,display);v.setOnClickPendingIntent(R.id.value,PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE));manager.updateAppWidget(id,v);}}
- @Override public int onStartCommand(Intent i,int flags,int startId){return START_STICKY;}
- @Override public void onDestroy(){handler.removeCallbacksAndMessages(null);super.onDestroy();}
- @Override public IBinder onBind(Intent i){return null;}
+    private static final String CHANNEL = "charging_w";
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private Runnable task;
+    private NotificationManager notifications;
+
+    static void start(Context context) {
+        int[] widgets = AppWidgetManager.getInstance(context)
+                .getAppWidgetIds(new ComponentName(context, ChargingWidget.class));
+        if (widgets.length > 0) {
+            try {
+                context.startForegroundService(new Intent(context, ChargeService.class));
+            } catch (Exception ignored) { }
+        }
+    }
+
+    private Notification notification(String details) {
+        return new Notification.Builder(this, CHANNEL)
+                .setContentTitle("Charging W")
+                .setContentText(details)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
+                .build();
+    }
+
+    @Override public void onCreate() {
+        super.onCreate();
+        notifications = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        notifications.createNotificationChannel(new NotificationChannel(
+                CHANNEL, "Charging W", NotificationManager.IMPORTANCE_LOW));
+        startForeground(1, notification("Mesure en cours"));
+        task = () -> {
+            update();
+            int seconds = getSharedPreferences("prefs", 0).getInt("seconds", 5);
+            handler.postDelayed(task, Math.max(1, seconds) * 1000L);
+        };
+        handler.post(task);
+    }
+
+    private void update() {
+        AppWidgetManager manager = AppWidgetManager.getInstance(this);
+        int[] ids = manager.getAppWidgetIds(new ComponentName(this, ChargingWidget.class));
+        if (ids.length == 0) { stopSelf(); return; }
+
+        String display = "–";
+        String diagnostic = "Débranché";
+        Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (battery != null && battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0) {
+            BatteryManager bm = (BatteryManager) getSystemService(BATTERY_SERVICE);
+            long now = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
+            long avg = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE);
+            int mv = battery.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0);
+            diagnostic = "NOW=" + now + " AVG=" + avg + " V=" + mv + "mV";
+
+            // Android specifies microamperes; some devices return unavailable/zero.
+            long current = now;
+            if (current == 0 || current == Long.MIN_VALUE || current == Integer.MIN_VALUE) {
+                current = avg;
+            }
+            if (mv > 0 && current != 0 && current != Long.MIN_VALUE
+                    && current != Integer.MIN_VALUE) {
+                double watts = Math.abs((double) current) * mv / 1_000_000_000.0;
+                display = String.format(Locale.US, "%.1f W", watts);
+            } else {
+                display = "N/A";
+            }
+        }
+        notifications.notify(1, notification(diagnostic));
+        for (int id : ids) {
+            RemoteViews views = new RemoteViews(getPackageName(), R.layout.widget);
+            views.setTextViewText(R.id.value, display);
+            views.setOnClickPendingIntent(R.id.value, PendingIntent.getActivity(
+                    this, 0, new Intent(this, MainActivity.class),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+            manager.updateAppWidget(id, views);
+        }
+    }
+
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        return START_STICKY;
+    }
+    @Override public void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
+    @Override public IBinder onBind(Intent intent) { return null; }
 }
