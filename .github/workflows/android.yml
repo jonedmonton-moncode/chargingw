@@ -28,11 +28,8 @@ jobs:
           echo "Using SDK Manager: $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Build APK
-        run: gradle assembleDebug
         
-      - name: Build APK2
+      - name: Build APK
         run: |
           gradle clean
           gradle assembleDebug --rerun-tasks
