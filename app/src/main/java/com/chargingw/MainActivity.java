@@ -94,7 +94,9 @@ public class MainActivity extends Activity {
             powerText.setTextColor(Color.WHITE);
             return;
         }
-        double current = ua / 1000000.0;
+        // Sur cet appareil, la valeur renvoyee correspond a des mA (malgre la specification Android en µA).
+        // Inversion du signe pour correspondre a la convention souhaitee.
+        double current = -ua / 1000.0;
         double power = voltage * current;
         int color = current > 0 ? Color.rgb(0, 220, 80) : current < 0 ? Color.rgb(255, 60, 60) : Color.WHITE;
         currentText.setText(String.format(Locale.FRANCE, "%+.3f A", current));
