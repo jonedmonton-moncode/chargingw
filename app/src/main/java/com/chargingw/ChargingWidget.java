@@ -1,7 +1,32 @@
 package com.chargingw;
-import android.appwidget.*;import android.content.*;import android.widget.*;import android.app.*;
+
+import android.appwidget.AppWidgetManager;
+import android.appwidget.AppWidgetProvider;
+import android.content.Context;
+import android.content.Intent;
+
 public class ChargingWidget extends AppWidgetProvider {
- @Override public void onUpdate(Context c,AppWidgetManager m,int[] ids){for(int id:ids){RemoteViews v=new RemoteViews(c.getPackageName(),R.layout.widget);v.setTextViewText(R.id.value,"–");v.setOnClickPendingIntent(R.id.value,PendingIntent.getActivity(c,0,new Intent(c,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE));m.updateAppWidget(id,v);}ChargeService.start(c);}
- @Override public void onEnabled(Context c){ChargeService.start(c);}
- @Override public void onDisabled(Context c){c.stopService(new Intent(c,ChargeService.class));}
+    public static final String ACTION_REFRESH = "com.chargingw.ACTION_REFRESH";
+
+    @Override public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
+        ChargeService.start(context);
+    }
+
+    @Override public void onEnabled(Context context) {
+        ChargeService.start(context);
+    }
+
+    @Override public void onDisabled(Context context) {
+        ChargeService.stop(context);
+    }
+
+    @Override public void onReceive(Context context, Intent intent) {
+        super.onReceive(context, intent);
+        String action = intent.getAction();
+        if (ACTION_REFRESH.equals(action)
+                || Intent.ACTION_POWER_CONNECTED.equals(action)
+                || Intent.ACTION_POWER_DISCONNECTED.equals(action)) {
+            ChargeService.update(context);
+        }
+    }
 }

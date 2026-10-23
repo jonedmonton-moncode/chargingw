@@ -1,105 +1,107 @@
 package com.chargingw;
 
-import android.app.*;
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
-import android.content.*;
-import android.os.*;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.BatteryManager;
 import android.widget.RemoteViews;
 import java.util.Locale;
 
-public class ChargeService extends Service {
-    private static final String CHANNEL = "charging_w";
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private Runnable task;
-    private NotificationManager notifications;
+// Kept the existing class name to minimize changes to the project.
+// No Android Service is started: only scheduled broadcasts are used.
+public final class ChargeService {
+    private static final int ALARM_REQUEST = 51;
+    private static final int MIN_SECONDS = 15 * 60;
 
-    static void start(Context context) {
-        int[] widgets = AppWidgetManager.getInstance(context)
-                .getAppWidgetIds(new ComponentName(context, ChargingWidget.class));
-        if (widgets.length > 0) {
-            try {
-                context.startForegroundService(new Intent(context, ChargeService.class));
-            } catch (Exception ignored) { }
+    private ChargeService() { }
+
+    private static PendingIntent alarmIntent(Context context) {
+        Intent intent = new Intent(context, ChargingWidget.class);
+        intent.setAction(ChargingWidget.ACTION_REFRESH);
+        return PendingIntent.getBroadcast(context, ALARM_REQUEST, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    public static void start(Context context) {
+        AppWidgetManager manager = AppWidgetManager.getInstance(context);
+        int[] ids = manager.getAppWidgetIds(new ComponentName(context, ChargingWidget.class));
+        if (ids.length == 0) {
+            stop(context);
+            return;
         }
+        int requested = context.getSharedPreferences("prefs", 0).getInt("seconds", MIN_SECONDS);
+        long interval = Math.max(MIN_SECONDS, requested) * 1000L;
+        AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarms != null) {
+            PendingIntent pending = alarmIntent(context);
+            alarms.cancel(pending);
+            alarms.setInexactRepeating(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    android.os.SystemClock.elapsedRealtime() + interval,
+                    interval, pending);
+        }
+        update(context);
     }
 
-    private Notification notification(String details) {
-        return new Notification.Builder(this, CHANNEL)
-                .setContentTitle("Charging W")
-                .setContentText(details)
-                .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
-                .build();
+    public static void stop(Context context) {
+        AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarms != null) alarms.cancel(alarmIntent(context));
     }
 
-    @Override public void onCreate() {
-        super.onCreate();
-        notifications = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        notifications.createNotificationChannel(new NotificationChannel(
-                CHANNEL, "Charging W", NotificationManager.IMPORTANCE_LOW));
-        startForeground(1, notification("Mesure en cours"));
-        task = () -> {
-            update();
-            int seconds = getSharedPreferences("prefs", 0).getInt("seconds", 5);
-            handler.postDelayed(task, Math.max(1, seconds) * 1000L);
-        };
-        handler.post(task);
-    }
+    public static void update(Context context) {
+        AppWidgetManager manager = AppWidgetManager.getInstance(context);
+        int[] ids = manager.getAppWidgetIds(new ComponentName(context, ChargingWidget.class));
+        if (ids.length == 0) return;
 
-    private void update() {
-        AppWidgetManager manager = AppWidgetManager.getInstance(this);
-        int[] ids = manager.getAppWidgetIds(new ComponentName(this, ChargingWidget.class));
-        if (ids.length == 0) { stopSelf(); return; }
-
-        String display = "–";
-        String diagnostic = "Débranché";
-        Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        if (battery != null && battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0) {
-            BatteryManager bm = (BatteryManager) getSystemService(BATTERY_SERVICE);
-            long now = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
-            long avg = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE);
+        String wattsText = "N/A";
+        String ampsText = "";
+        Intent battery = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (battery != null) {
             int mv = battery.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0);
-            diagnostic = "NOW=" + now + " AVG=" + avg + " V=" + mv + "mV";
-
-            // POCO X5: observed values around -1520 appear to be mA,
-            // despite the Android API specifying microamperes.
-            // This is an empirical device-specific workaround.
-            long current = now;
-            if (current == 0 || current == Long.MIN_VALUE || current == Integer.MIN_VALUE) {
-                current = avg;
-            }
-            if (mv > 0 && current != 0 && current != Long.MIN_VALUE
-                    && current != Integer.MIN_VALUE) {
-                double absoluteCurrent = Math.abs((double) current);
-                double watts;
-                if (absoluteCurrent < 10000.0) {
-                    // Suspected milliamperes: mA * mV / 1,000,000.
-                    watts = absoluteCurrent * mv / 1_000_000.0;
-                } else {
-                    // Standard Android microamperes: uA * mV / 1,000,000,000.
-                    watts = absoluteCurrent * mv / 1_000_000_000.0;
+            int status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN);
+            int plugged = battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
+            BatteryManager bm = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
+            if (bm != null && mv > 0) {
+                long now = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
+                long avg = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE);
+                long raw = valid(now) ? now : avg;
+                if (valid(raw)) {
+                    double magnitude = Math.abs((double) raw);
+                    // Empirical POCO X5 workaround: small raw readings appear to be mA.
+                    double amps = magnitude < 10000.0 ? magnitude / 1000.0 : magnitude / 1000000.0;
+                    // Use battery status / plugged state, not the device-specific raw sign.
+                    boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                            status == BatteryManager.BATTERY_STATUS_FULL;
+                    double sign = charging ? 1.0 : -1.0;
+                    // A connected device may still discharge; show negative in that case.
+                    if (status == BatteryManager.BATTERY_STATUS_UNKNOWN && plugged != 0) {
+                        sign = 1.0;
+                    }
+                    double signedAmps = sign * amps;
+                    double signedWatts = signedAmps * mv / 1000.0;
+                    wattsText = String.format(Locale.US, "%.1f W", signedWatts);
+                    ampsText = String.format(Locale.US, "%.2f A", signedAmps);
                 }
-                display = String.format(Locale.US, "%.1f W", watts);
-            } else {
-                display = "N/A";
             }
         }
-        notifications.notify(1, notification(diagnostic));
         for (int id : ids) {
-            RemoteViews views = new RemoteViews(getPackageName(), R.layout.widget);
-            views.setTextViewText(R.id.value, display);
-            views.setOnClickPendingIntent(R.id.value, PendingIntent.getActivity(
-                    this, 0, new Intent(this, MainActivity.class),
+            RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget);
+            views.setTextViewText(R.id.value, wattsText);
+            views.setTextViewText(R.id.amps, ampsText);
+            views.setOnClickPendingIntent(R.id.value, PendingIntent.getActivity(context, 0,
+                    new Intent(context, MainActivity.class),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+            views.setOnClickPendingIntent(R.id.amps, PendingIntent.getActivity(context, 0,
+                    new Intent(context, MainActivity.class),
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
             manager.updateAppWidget(id, views);
         }
     }
 
-    @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY;
+    private static boolean valid(long value) {
+        return value != 0 && value != Long.MIN_VALUE && value != Integer.MIN_VALUE;
     }
-    @Override public void onDestroy() {
-        handler.removeCallbacksAndMessages(null);
-        super.onDestroy();
-    }
-    @Override public IBinder onBind(Intent intent) { return null; }
 }
