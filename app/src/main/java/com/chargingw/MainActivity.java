@@ -1,0 +1,5 @@
+package com.chargingw;
+import android.app.*;import android.os.*;import android.content.*;import android.text.InputType;import android.widget.*;
+public class MainActivity extends Activity {
+ @Override public void onCreate(Bundle b){super.onCreate(b); LinearLayout l=new LinearLayout(this);l.setOrientation(1);l.setPadding(32,48,32,24); TextView title=new TextView(this);title.setText("Charging W\n\nFréquence de rafraîchissement (secondes)");title.setTextSize(20);l.addView(title);EditText field=new EditText(this);field.setInputType(InputType.TYPE_CLASS_NUMBER);field.setSingleLine(true);field.setText(String.valueOf(getSharedPreferences("prefs",0).getInt("seconds",5)));l.addView(field);Button save=new Button(this);save.setText("Enregistrer");l.addView(save);setContentView(l);save.setOnClickListener(v->{try{int s=Integer.parseInt(field.getText().toString());if(s<1||s>86400)throw new Exception();getSharedPreferences("prefs",0).edit().putInt("seconds",s).apply();ChargeService.start(this);Toast.makeText(this,"Enregistré",Toast.LENGTH_SHORT).show();}catch(Exception e){field.setError("Saisir un entier entre 1 et 86400");}});ChargeService.start(this); }
+}
