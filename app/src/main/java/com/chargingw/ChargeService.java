@@ -115,5 +115,5 @@ public class ChargeService extends Service {
             manager.updateAppWidget(id, views);
         }
     }
-
+}
    
