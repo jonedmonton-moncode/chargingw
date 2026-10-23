@@ -31,7 +31,12 @@ jobs:
 
       - name: Build APK
         run: gradle assembleDebug
-
+        
+      - name: Build APK2
+        run: |
+          gradle clean
+          gradle assembleDebug --rerun-tasks
+          
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
